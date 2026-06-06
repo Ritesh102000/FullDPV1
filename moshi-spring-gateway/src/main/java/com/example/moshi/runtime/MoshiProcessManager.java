@@ -7,6 +7,8 @@ import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
@@ -14,7 +16,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -27,6 +31,8 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 
 	private static final Logger log = LoggerFactory.getLogger(MoshiProcessManager.class);
 	private static final Duration COMMAND_TIMEOUT = Duration.ofSeconds(8);
+	private static final Duration VENV_TIMEOUT = Duration.ofMinutes(5);
+	private static final Duration INSTALL_TIMEOUT = Duration.ofMinutes(20);
 	private static final int MAX_LOG_LINES = 80;
 
 	private final MoshiProperties properties;
@@ -35,6 +41,7 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 	private final ArrayDeque<String> recentLogs = new ArrayDeque<>();
 
 	private volatile Process process;
+	private volatile Process setupProcess;
 	private volatile State state = State.NOT_STARTED;
 	private volatile String message = "Moshi has not been checked yet.";
 	private volatile Instant startedAt;
@@ -65,10 +72,14 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 		}
 
 		if (!isMoshiInstalled()) {
-			state = State.NOT_INSTALLED;
-			message = "moshi_mlx is not installed for " + properties.pythonExecutable() + ".";
-			log.warn(message);
-			return;
+			if (!installMoshiIfEnabled()) {
+				state = State.NOT_INSTALLED;
+				if (!properties.autoInstall()) {
+					message = "moshi_mlx is not installed for " + properties.pythonExecutable() + ".";
+				}
+				log.warn(message);
+				return;
+			}
 		}
 
 		if (process != null && process.isAlive()) {
@@ -107,9 +118,11 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 		State currentState = currentState();
 		return new Snapshot(
 				properties.autoStart(),
+				properties.autoInstall(),
 				currentState.name().toLowerCase().replace('_', '-'),
 				message,
 				properties.pythonExecutable(),
+				properties.bootstrapPython(),
 				properties.host(),
 				properties.port(),
 				properties.quantized(),
@@ -171,6 +184,133 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 		}
 	}
 
+	private boolean installMoshiIfEnabled() {
+		if (!properties.autoInstall()) {
+			return false;
+		}
+
+		state = State.INSTALLING;
+		Path pythonPath = Path.of(properties.pythonExecutable()).toAbsolutePath();
+		Path venvPath = venvPathFor(pythonPath);
+
+		if (!Files.exists(pythonPath)) {
+			if (venvPath == null) {
+				message = "Could not infer a virtual environment path from " + pythonPath + ".";
+				log.warn(message);
+				return false;
+			}
+
+			try {
+				Path venvParent = venvPath.getParent();
+				if (venvParent != null) {
+					Files.createDirectories(venvParent);
+				}
+			}
+			catch (IOException exception) {
+				message = "Could not create parent directory for " + venvPath + ": " + exception.getMessage();
+				log.warn(message, exception);
+				return false;
+			}
+
+			message = "Creating Moshi Python virtual environment at " + venvPath + ".";
+			log.info(message);
+			if (!runCommand(
+					List.of(properties.bootstrapPython(), "-m", "venv", venvPath.toString()),
+					VENV_TIMEOUT,
+					"[moshi setup]"
+			)) {
+				message = "Could not create Moshi Python virtual environment. Install Python 3.12 or set MOSHI_BOOTSTRAP_PYTHON.";
+				log.warn(message);
+				return false;
+			}
+		}
+
+		message = "Installing moshi_mlx into " + pythonPath + ". This can take a few minutes.";
+		log.info(message);
+		if (!runCommand(
+				List.of(pythonPath.toString(), "-m", "pip", "install", "-U", "pip", "moshi_mlx"),
+				INSTALL_TIMEOUT,
+				"[moshi setup]"
+		)) {
+			message = "Could not install moshi_mlx. Check the recent Moshi setup logs.";
+			log.warn(message);
+			return false;
+		}
+
+		if (!isMoshiInstalled()) {
+			message = "moshi_mlx install command finished, but the module still could not be imported.";
+			log.warn(message);
+			return false;
+		}
+
+		message = "moshi_mlx installed successfully.";
+		log.info(message);
+		return true;
+	}
+
+	private Path venvPathFor(Path pythonPath) {
+		Path parent = pythonPath.getParent();
+		if (parent == null) {
+			return null;
+		}
+
+		if ("bin".equals(parent.getFileName().toString())) {
+			return parent.getParent();
+		}
+
+		return parent;
+	}
+
+	private boolean runCommand(List<String> command, Duration timeout, String logPrefix) {
+		Process commandProcess;
+		try {
+			commandProcess = new ProcessBuilder(command)
+					.redirectErrorStream(true)
+					.start();
+		}
+		catch (IOException exception) {
+			addLogLine(logPrefix + " " + exception.getMessage());
+			log.warn("Could not run command: {}", String.join(" ", command), exception);
+			return false;
+		}
+
+		setupProcess = commandProcess;
+		Future<?> outputReader = logReader.submit(() -> readCommandLogs(commandProcess, logPrefix));
+
+		try {
+			boolean completed = commandProcess.waitFor(timeout.toSeconds(), TimeUnit.SECONDS);
+			if (!completed) {
+				commandProcess.destroyForcibly();
+				outputReader.cancel(true);
+				addLogLine(logPrefix + " timed out: " + String.join(" ", command));
+				return false;
+			}
+
+			try {
+				outputReader.get(2, TimeUnit.SECONDS);
+			}
+			catch (TimeoutException exception) {
+				outputReader.cancel(true);
+			}
+
+			return commandProcess.exitValue() == 0;
+		}
+		catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			commandProcess.destroyForcibly();
+			return false;
+		}
+		catch (Exception exception) {
+			log.warn("Command failed: {}", String.join(" ", command), exception);
+			return false;
+		}
+		finally {
+			if (setupProcess == commandProcess) {
+				setupProcess = null;
+			}
+		}
+	}
+
 	private boolean isPortOpen() {
 		try (Socket socket = new Socket()) {
 			socket.connect(new InetSocketAddress("127.0.0.1", properties.port()), 500);
@@ -201,6 +341,22 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 		}
 	}
 
+	private void readCommandLogs(Process commandProcess, String logPrefix) {
+		try (BufferedReader reader = new BufferedReader(
+				new InputStreamReader(commandProcess.getInputStream(), StandardCharsets.UTF_8))) {
+			String line;
+			while ((line = reader.readLine()) != null) {
+				String setupLogLine = logPrefix + " " + line;
+				addLogLine(setupLogLine);
+				log.info("{}", setupLogLine);
+			}
+		}
+		catch (IOException exception) {
+			addLogLine(logPrefix + " Could not read command logs: " + exception.getMessage());
+			log.warn("Could not read command logs", exception);
+		}
+	}
+
 	private void addLogLine(String line) {
 		synchronized (monitor) {
 			recentLogs.addLast(line);
@@ -223,6 +379,12 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 
 	@Override
 	public void stop() {
+		Process currentSetupProcess = setupProcess;
+		if (currentSetupProcess != null && currentSetupProcess.isAlive()) {
+			log.info("Stopping Moshi setup process started by Spring.");
+			currentSetupProcess.destroy();
+		}
+
 		Process currentProcess = process;
 		if (currentProcess != null && currentProcess.isAlive()) {
 			log.info("Stopping Moshi process started by Spring.");
@@ -241,6 +403,7 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 		NOT_STARTED,
 		DISABLED,
 		NOT_INSTALLED,
+		INSTALLING,
 		STARTING,
 		READY,
 		ERROR
@@ -248,9 +411,11 @@ public class MoshiProcessManager implements ApplicationRunner, SmartLifecycle {
 
 	public record Snapshot(
 			boolean autoStart,
+			boolean autoInstall,
 			String state,
 			String message,
 			String pythonExecutable,
+			String bootstrapPython,
 			String host,
 			int port,
 			int quantized,

@@ -11,7 +11,9 @@ import org.springframework.validation.annotation.Validated;
 public record MoshiProperties(
 		@NotBlank String websocketUrl,
 		boolean autoStart,
+		boolean autoInstall,
 		@NotBlank String pythonExecutable,
+		@NotBlank String bootstrapPython,
 		@NotBlank String host,
 		@Min(1) @Max(65535) int port,
 		@Min(4) @Max(8) int quantized
@@ -23,6 +25,7 @@ public record MoshiProperties(
 				pythonExecutable,
 				System.getProperty("user.home") + "/.venvs/moshi-mlx/bin/python"
 		);
+		bootstrapPython = defaultIfBlank(bootstrapPython, "/opt/homebrew/bin/python3.12");
 		host = defaultIfBlank(host, "0.0.0.0");
 		port = port == 0 ? 8998 : port;
 		quantized = quantized == 0 ? 4 : quantized;

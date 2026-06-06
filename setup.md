@@ -66,7 +66,44 @@ git clone https://github.com/Ritesh102000/FullDPV1.git
 cd FullDPV1/moshi-spring-gateway
 ```
 
-## Install Moshi MLX
+## Automatic Moshi Install
+
+Spring can install Moshi MLX automatically when you run the project.
+
+On first run, if this Python does not exist:
+
+```text
+~/.venvs/moshi-mlx/bin/python
+```
+
+Spring will run:
+
+```bash
+/opt/homebrew/bin/python3.12 -m venv ~/.venvs/moshi-mlx
+~/.venvs/moshi-mlx/bin/python -m pip install -U pip moshi_mlx
+```
+
+So the normal path is:
+
+```bash
+./mvnw spring-boot:run
+```
+
+You only need to install Python 3.12 first. The Python path used to create the venv is configured with:
+
+```properties
+moshi.bootstrap-python=${MOSHI_BOOTSTRAP_PYTHON:/opt/homebrew/bin/python3.12}
+```
+
+If your Python 3.12 is somewhere else, run:
+
+```bash
+MOSHI_BOOTSTRAP_PYTHON=/path/to/python3.12 ./mvnw spring-boot:run
+```
+
+## Manual Moshi Install
+
+You can still install Moshi yourself if you do not want Spring to do it.
 
 Create a dedicated Python virtual environment:
 
@@ -101,7 +138,9 @@ Default values:
 ```properties
 moshi.websocket-url=${MOSHI_WS_URL:ws://localhost:8998/api/chat}
 moshi.auto-start=${MOSHI_AUTO_START:true}
+moshi.auto-install=${MOSHI_AUTO_INSTALL:true}
 moshi.python-executable=${MOSHI_PYTHON:${user.home}/.venvs/moshi-mlx/bin/python}
+moshi.bootstrap-python=${MOSHI_BOOTSTRAP_PYTHON:/opt/homebrew/bin/python3.12}
 moshi.host=${MOSHI_HOST:0.0.0.0}
 moshi.port=${MOSHI_PORT:8998}
 moshi.quantized=${MOSHI_QUANTIZED:4}
@@ -150,8 +189,9 @@ Spring will:
 
 1. Start on port `8080`.
 2. Check whether Moshi is already listening on port `8998`.
-3. Start Moshi MLX automatically if needed.
-4. Serve the browser UI.
+3. Create `~/.venvs/moshi-mlx` and install `moshi_mlx` if missing.
+4. Start Moshi MLX automatically if needed.
+5. Serve the browser UI.
 
 Open:
 
@@ -168,7 +208,7 @@ Then:
 
 ## First Startup
 
-The first run can look slow because Moshi downloads model files.
+The first run can look slow because Spring may install `moshi_mlx`, then Moshi downloads model files.
 
 That is expected. Let it finish.
 
@@ -260,11 +300,25 @@ src/test/resources/application.properties
 
 ### `Moshi is not installed`
 
-Spring could not run the configured Python module.
+Spring could not run the configured Python module and automatic install did not finish.
 
-Fix:
+First check that Python 3.12 exists:
 
 ```bash
+/opt/homebrew/bin/python3.12 --version
+```
+
+If your Python 3.12 is elsewhere, point Spring to it:
+
+```bash
+MOSHI_BOOTSTRAP_PYTHON=/path/to/python3.12 ./mvnw spring-boot:run
+```
+
+You can also install manually:
+
+```bash
+mkdir -p ~/.venvs
+/opt/homebrew/bin/python3.12 -m venv ~/.venvs/moshi-mlx
 ~/.venvs/moshi-mlx/bin/python -m pip install -U moshi_mlx
 ```
 
@@ -335,6 +389,12 @@ Then start Spring with auto-start disabled:
 
 ```bash
 MOSHI_AUTO_START=false ./mvnw spring-boot:run
+```
+
+If you also want to prevent Spring from installing `moshi_mlx`, disable auto-install:
+
+```bash
+MOSHI_AUTO_INSTALL=false ./mvnw spring-boot:run
 ```
 
 ## Project Layout

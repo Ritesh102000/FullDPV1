@@ -217,7 +217,7 @@
 
   function renderMoshiProcess(process) {
     moshiProcessState.textContent = process.state;
-    moshiRuntime.textContent = `${process.pythonExecutable} | host=${process.host} port=${process.port} q=${process.quantized} autoStart=${process.autoStart}`;
+    moshiRuntime.textContent = `${process.pythonExecutable} | bootstrap=${process.bootstrapPython} | host=${process.host} port=${process.port} q=${process.quantized} autoStart=${process.autoStart} autoInstall=${process.autoInstall}`;
     moshiMessage.textContent = process.message;
     moshiLogs.textContent = process.recentLogs.length
       ? process.recentLogs.map(stripAnsi).join("\n")

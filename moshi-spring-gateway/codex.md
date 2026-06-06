@@ -21,6 +21,7 @@ Important behavior:
 - The browser connects only to Spring.
 - Spring relays Moshi-compatible WebSocket binary frames to the local Moshi MLX server.
 - Spring auto-starts Moshi when the Spring app starts, if Moshi is not already listening on port `8998`.
+- Spring auto-installs `moshi_mlx` into `~/.venvs/moshi-mlx` if that venv/module is missing.
 - Moshi model weights are cached by Hugging Face under `~/.cache/huggingface`, so they should not fully download on every start.
 
 ## How To Run
@@ -29,9 +30,9 @@ One-time setup on a new machine:
 
 ```bash
 brew install python@3.12
-/opt/homebrew/bin/python3.12 -m venv ~/.venvs/moshi-mlx
-~/.venvs/moshi-mlx/bin/python -m pip install -U pip moshi_mlx
 ```
+
+Spring will create `~/.venvs/moshi-mlx` and install `moshi_mlx` on first run if needed.
 
 Start the Spring app:
 
@@ -126,7 +127,9 @@ Current properties:
 spring.application.name=moshi-spring-gateway
 moshi.websocket-url=${MOSHI_WS_URL:ws://localhost:8998/api/chat}
 moshi.auto-start=${MOSHI_AUTO_START:true}
+moshi.auto-install=${MOSHI_AUTO_INSTALL:true}
 moshi.python-executable=${MOSHI_PYTHON:${user.home}/.venvs/moshi-mlx/bin/python}
+moshi.bootstrap-python=${MOSHI_BOOTSTRAP_PYTHON:/opt/homebrew/bin/python3.12}
 moshi.host=${MOSHI_HOST:0.0.0.0}
 moshi.port=${MOSHI_PORT:8998}
 moshi.quantized=${MOSHI_QUANTIZED:4}
@@ -167,6 +170,8 @@ Useful overrides:
 
 ```bash
 MOSHI_AUTO_START=false ./mvnw spring-boot:run
+MOSHI_AUTO_INSTALL=false ./mvnw spring-boot:run
+MOSHI_BOOTSTRAP_PYTHON=/path/to/python3.12 ./mvnw spring-boot:run
 MOSHI_PYTHON=/path/to/python ./mvnw spring-boot:run
 MOSHI_WS_URL=ws://localhost:8998/api/chat ./mvnw spring-boot:run
 ```
@@ -209,7 +214,9 @@ It stores:
 
 - `websocketUrl`: backend Moshi WebSocket URL.
 - `autoStart`: whether Spring should start Moshi automatically.
+- `autoInstall`: whether Spring should create the venv and install `moshi_mlx` automatically.
 - `pythonExecutable`: Python executable used to run `moshi_mlx`.
+- `bootstrapPython`: Python executable used to create the venv when `pythonExecutable` does not exist.
 - `host`: host passed to Moshi.
 - `port`: port passed to Moshi.
 - `quantized`: q4/q8 MLX model choice.
@@ -225,6 +232,7 @@ Responsibilities:
 - Runs at Spring startup.
 - Checks if Moshi is already listening on the configured port.
 - Checks if `moshi_mlx.local_web` is installed for the configured Python.
+- Creates the configured Python venv and installs `moshi_mlx` if auto-install is enabled.
 - Starts Moshi if needed.
 - Captures recent Moshi logs.
 - Exposes current state through a `Snapshot`.
@@ -235,6 +243,7 @@ States:
 - `not-started`
 - `disabled`
 - `not-installed`
+- `installing`
 - `starting`
 - `ready`
 - `error`
