@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Moshi Spring Gateway</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f6f7f9;
+      color: #1d2433;
+    }
+
+    body {
+      margin: 0;
+    }
+
+    main {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 20px;
+    }
+
+    header {
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 28px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 20px 0;
+    }
+
+    .panel {
+      background: #ffffff;
+      border: 1px solid #d9dee7;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .label {
+      display: block;
+      margin-bottom: 6px;
+      color: #5d6678;
+      font-size: 13px;
+    }
+
+    .value {
+      overflow-wrap: anywhere;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 14px;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 16px 0;
+    }
+
+    button {
+      min-height: 40px;
+      border: 1px solid #aeb7c5;
+      border-radius: 6px;
+      background: #ffffff;
+      color: #1d2433;
+      padding: 0 14px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: #2463eb;
+      background: #2463eb;
+      color: #ffffff;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    #log {
+      height: 340px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #101828;
+      color: #e5e7eb;
+      border-radius: 8px;
+      padding: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    #moshiLogs {
+      margin-top: 12px;
+      max-height: 160px;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      border: 1px solid #d9dee7;
+      border-radius: 6px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+      background: #f8fafc;
+      color: #344054;
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Moshi Spring Gateway</h1>
+  </header>
+
+  <section class="status-grid" aria-label="Gateway status">
+    <div class="panel">
+      <span class="label">Moshi URL</span>
+      <span id="moshiUrl" class="value">loading</span>
+    </div>
+    <div class="panel">
+      <span class="label">Gateway WebSocket</span>
+      <span id="gatewayPath" class="value">loading</span>
+    </div>
+    <div class="panel">
+      <span class="label">Connection</span>
+      <span id="connectionStatus" class="value">disconnected</span>
+    </div>
+    <div class="panel">
+      <span class="label">Moshi Process</span>
+      <span id="moshiProcessState" class="value">loading</span>
+    </div>
+    <div class="panel wide">
+      <span class="label">Moshi Runtime</span>
+      <span id="moshiRuntime" class="value">loading</span>
+    </div>
+    <div class="panel wide">
+      <span class="label">Moshi Message</span>
+      <span id="moshiMessage" class="value">loading</span>
+      <div id="moshiLogs"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="controls">
+      <button id="refreshStatus">Refresh Status</button>
+      <button id="startMoshi">Start Moshi</button>
+      <button id="checkMoshi">Check Moshi</button>
+      <button id="connect" class="primary">Connect</button>
+      <button id="disconnect" disabled>Disconnect</button>
+      <button id="startTalking" disabled>Start Talking</button>
+      <button id="stopTalking" disabled>Stop Talking</button>
+    </div>
+    <div id="log" role="log" aria-live="polite"></div>
+  </section>
+</main>
+
+<script>
+  const moshiUrl = document.querySelector("#moshiUrl");
+  const gatewayPath = document.querySelector("#gatewayPath");
+  const connectionStatus = document.querySelector("#connectionStatus");
+  const moshiProcessState = document.querySelector("#moshiProcessState");
+  const moshiRuntime = document.querySelector("#moshiRuntime");
+  const moshiMessage = document.querySelector("#moshiMessage");
+  const moshiLogs = document.querySelector("#moshiLogs");
+  const log = document.querySelector("#log");
+  const refreshStatus = document.querySelector("#refreshStatus");
+  const startMoshi = document.querySelector("#startMoshi");
+  const checkMoshi = document.querySelector("#checkMoshi");
+  const connectButton = document.querySelector("#connect");
+  const disconnectButton = document.querySelector("#disconnect");
+  const startTalkingButton = document.querySelector("#startTalking");
+  const stopTalkingButton = document.querySelector("#stopTalking");
+
+  let socket;
+
+  function addLog(message) {
+    const time = new Date().toLocaleTimeString();
+    log.textContent += `[${time}] ${message}\n`;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function setConnected(connected) {
+    connectionStatus.textContent = connected ? "connected" : "disconnected";
+    connectButton.disabled = connected;
+    disconnectButton.disabled = !connected;
+    startTalkingButton.disabled = true;
+    stopTalkingButton.disabled = true;
+  }
+
+  async function loadStatus(options = {}) {
+    const response = await fetch("/api/moshi/status");
+    const status = await response.json();
+    moshiUrl.textContent = status.moshiWebsocketUrl;
+    gatewayPath.textContent = status.voiceGatewayPath;
+    renderMoshiProcess(status.moshiProcess);
+    if (!options.quiet) {
+      addLog(`Gateway status: ${status.status}; Moshi: ${status.moshiProcess.state}`);
+    }
+  }
+
+  function renderMoshiProcess(process) {
+    moshiProcessState.textContent = process.state;
+    moshiRuntime.textContent = `${process.pythonExecutable} | host=${process.host} port=${process.port} q=${process.quantized} autoStart=${process.autoStart}`;
+    moshiMessage.textContent = process.message;
+    moshiLogs.textContent = process.recentLogs.length
+      ? process.recentLogs.map(stripAnsi).join("\n")
+      : "No Moshi logs yet.";
+  }
+
+  function stripAnsi(value) {
+    return value.replace(/\x1b\[[0-9;]*m/g, "");
+  }
+
+  async function startMoshiProcess() {
+    addLog("Starting Moshi process");
+    const response = await fetch("/api/moshi/start", { method: "POST" });
+    const process = await response.json();
+    renderMoshiProcess(process);
+    addLog(`Moshi process state: ${process.state}; ${process.message}`);
+  }
+
+  async function checkMoshiConnection() {
+    addLog("Checking Moshi connection");
+    const response = await fetch("/api/moshi/check", { method: "POST" });
+    const result = await response.json();
+    addLog(result.message);
+  }
+
+  function connectGateway() {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      return;
+    }
+
+    const scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    const url = `${scheme}://${window.location.host}/ws/voice`;
+
+    addLog(`Connecting to ${url}`);
+    socket = new WebSocket(url);
+    socket.binaryType = "arraybuffer";
+
+    socket.onopen = () => {
+      setConnected(true);
+      addLog("Gateway WebSocket connected");
+    };
+
+    socket.onmessage = (event) => {
+      if (typeof event.data === "string") {
+        addLog(`Text frame: ${event.data}`);
+        return;
+      }
+
+      const bytes = new Uint8Array(event.data);
+      const type = bytes.length > 0 ? `0x${bytes[0].toString(16).padStart(2, "0")}` : "empty";
+      addLog(`Binary frame: ${bytes.length} bytes, type ${type}`);
+    };
+
+    socket.onerror = () => {
+      addLog("Gateway WebSocket error");
+    };
+
+    socket.onclose = (event) => {
+      setConnected(false);
+      addLog(`Gateway WebSocket closed: ${event.code} ${event.reason || ""}`.trim());
+    };
+  }
+
+  function disconnectGateway() {
+    if (socket) {
+      socket.close(1000, "Client disconnected");
+    }
+  }
+
+  refreshStatus.addEventListener("click", () => loadStatus().catch(error => addLog(error.message)));
+  startMoshi.addEventListener("click", () => startMoshiProcess().catch(error => addLog(error.message)));
+  checkMoshi.addEventListener("click", () => checkMoshiConnection().catch(error => addLog(error.message)));
+  connectButton.addEventListener("click", connectGateway);
+  disconnectButton.addEventListener("click", disconnectGateway);
+
+  setConnected(false);
+  loadStatus().catch(error => addLog(error.message));
+  window.setInterval(() => loadStatus({ quiet: true }).catch(() => {}), 5000);
+</script>
+</body>
+</html>
