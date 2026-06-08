@@ -38,21 +38,22 @@ public class MoshiVoiceGatewayHandler extends BinaryWebSocketHandler {
 		log.info("Browser WebSocket connected: {}", browserSession.getId());
 
 		WebSocketHandler moshiHandler = new MoshiBackendHandler(browserSession);
+		String moshiWebsocketUrl = moshiWebsocketUrlFor(browserSession);
 		WebSocketSession moshiSession;
 		try {
 			moshiSession = moshiClient
-					.execute(moshiHandler, moshiProperties.websocketUrl())
+					.execute(moshiHandler, moshiWebsocketUrl)
 					.get(MOSHI_CONNECT_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 		}
 		catch (Exception exception) {
 			log.warn("Could not connect browser session {} to Moshi at {}",
-					browserSession.getId(), moshiProperties.websocketUrl(), exception);
+					browserSession.getId(), moshiWebsocketUrl, exception);
 			browserSession.close(CloseStatus.SERVER_ERROR.withReason("Could not connect to Moshi on port 8998."));
 			return;
 		}
 
 		moshiSessionsByBrowserSessionId.put(browserSession.getId(), moshiSession);
-		log.info("Moshi WebSocket connected for browser session {}", browserSession.getId());
+		log.info("Moshi WebSocket connected for browser session {} using {}", browserSession.getId(), moshiWebsocketUrl);
 	}
 
 	@Override
@@ -112,6 +113,23 @@ public class MoshiVoiceGatewayHandler extends BinaryWebSocketHandler {
 		catch (IOException exception) {
 			log.warn("Could not send text message to {}", sessionName, exception);
 		}
+	}
+
+	private String moshiWebsocketUrlFor(WebSocketSession browserSession) {
+		String browserQuery = browserSession.getUri() == null ? null : browserSession.getUri().getRawQuery();
+		return appendQuery(moshiProperties.websocketUrl(), browserQuery);
+	}
+
+	static String appendQuery(String websocketUrl, String rawQuery) {
+		if (rawQuery == null || rawQuery.isBlank()) {
+			return websocketUrl;
+		}
+
+		if (websocketUrl.endsWith("?") || websocketUrl.endsWith("&")) {
+			return websocketUrl + rawQuery;
+		}
+
+		return websocketUrl + (websocketUrl.contains("?") ? "&" : "?") + rawQuery;
 	}
 
 	private static byte[] copyPayload(WebSocketMessage<?> message) {
